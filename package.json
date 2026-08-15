@@ -1,0 +1,39 @@
+{
+  "name": "dsh-llm-headers",
+  "version": "0.2.0",
+  "description": "Model-bound custom HTTP headers for LLM requests: llm/stream capture + ALS + fetch injection (soft-replacement: host half + settings.section UI)",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./lib/client.js"
+  },
+  "files": [
+    "index.js",
+    "cordis.patch.yml",
+    "README.md",
+    "lib/"
+  ],
+  "scripts": {
+    "build": "tsdown",
+    "test": "node smoke.test.mjs"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [],
+      "platform": "web"
+    }
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "lightningcss": "^1.29.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "tsdown": "^0.22.14"
+  },
+  "license": "MIT"
+}
