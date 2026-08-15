@@ -20,6 +20,8 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 
 export const name = 'dsh-llm-headers'
 
+export const inject = ['settings']
+
 const MARK = Symbol.for('dsh.llmHeaders.wrapper')
 const als = new AsyncLocalStorage()
 
