@@ -95,6 +95,20 @@ harness 的 apiproxy 对设置命名空间有**硬编码白名单**（`WEB_SETTI
 
 本仓库已随安装在此处加入了该行（本地 harness 改动，不随本仓库分发）。
 
+第二个必要补丁：pi-ai 适配器把 `user-agent` 当作 attribution 保留名强行覆盖
+（`llm-pi-ai/src/adapter.ts` 的 `requestHeaders()`），导致部署配的 User-Agent
+永远上不了线。已在本仓库的该文件里放开 **user-agent 一个名字**允许部署覆盖
+（其余保留名仍以 Harness attribution 为准）：
+
+```ts
+// packages/llm/llm-pi-ai/src/adapter.ts —— requestHeaders()
+// 部署显式配置的 user-agent 允许胜出；其余 attribution 名维持原优先级。
+```
+
+真正上线的通道是 **llm-pi-ai 的 provider 级 `headers` 配置**（settings 的
+`llm-pi-ai.providers.<route>.headers`，经 pi-ai 的 openai SDK `defaultHeaders`
+原样发出）；fetch 层的全局包装只对 fetch 直连路径可见，pi-ai 的 SDK 请求不经过它。
+
 ## 构建（client 半边）
 
 node 半边 `index.js` 为手写零依赖 ESM，无需构建；只有 client 产物需要构建：
