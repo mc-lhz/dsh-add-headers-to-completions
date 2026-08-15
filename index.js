@@ -250,10 +250,11 @@ export async function apply(ctx, config = {}) {
   if (typeof original !== 'function') {
     throw new Error('dsh-llm-headers: globalThis.fetch 不可用，无法注入')
   }
-  if (original[MARK] === true) {
-    log.warn('[dsh-llm-headers] fetch 已被包装，跳过重复包装')
-    return
-  }
+  // 注意：不在此处因 MARK 早退。本行会被多个 app 链各自挂载（实测内核实例在
+  // 启动期可能被重建 → fiber 卸载会走 dispose 还原 fetch）；若早退，重建后
+  // 无人接管 heal interval，注入会随旧实例的还原而丢失。始终叠一层新包装
+  // 覆盖现有包装（含我们自己的旧包装），dispose 仅在 global 仍是自己最新
+  // 包装时才还原，旧实例的卸载不会误杀新实例的注入链。
 
   // 包装器：hosts 过滤 → ALS 上下文解析三层表 → 合并进 init.headers。
   // 注意底层指向 `under`（变量），而非固定 original：若其它插件在 apply 之后
@@ -261,6 +262,7 @@ export async function apply(ctx, config = {}) {
   // 以当时的 global fetch 为底层重建包装链，保留其它包装而不跳过它们。
   const wrapUnder = (under) => {
     const w = async (input, init) => {
+      if (w.retired) return under(input, init) // 退役后的透传（卸载时避免残留注入）
       const hostname = hostnameOf(input)
       if (hostname !== null && matches(hostname, hosts)) {
         const headers = resolveFor(als.getStore(), tables)
@@ -296,7 +298,11 @@ export async function apply(ctx, config = {}) {
   timer.unref?.()
   ctx.effect(() => {
     clearInterval(timer)
+    // 卸载语义：global 仍是我们最新包装时才还原 original；若已被更晚挂载的
+    // 实例（同插件其它 app 链）的包装接管，则跳过还原以免误杀在用的链。
+    // 停用后的包装退役为透传（不再注入残留头）。
     if (globalThis.fetch === current) globalThis.fetch = original
+    if (typeof current === 'function') current.retired = true
   }, 'dsh-llm-headers: fetch wrapper')
 
   log.info(`[dsh-llm-headers] 已激活: global=${Object.keys(tables.global).length}, ` +

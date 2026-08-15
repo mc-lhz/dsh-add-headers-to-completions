@@ -102,12 +102,15 @@ check('T4 非禁用头名注入', received['x-custom-length'] === '999')
 check('T4 CRLF 头被过滤', received['x-evil'] === undefined)
 check('T4 合法头注入', received['x-ok'] === 'yes')
 
-// T5 防重复包装（HMR 场景）
+// T5 双重挂载（同插件另一 app 链再次 apply）不破坏请求链：
+// 每次 apply 都叠一层自己的包装（防止卸载级联还原误杀），配置相同则结果一致
 dispose(ctx); ctx = makeCtx()
 await apply(ctx, { headers: { 'x-dup': '1' }, hosts: ['127.0.0.1'] })
-await apply(makeCtx(), { headers: { 'x-dup': '2' }, hosts: ['127.0.0.1'] }) // 应告警并跳过
+const stray = makeCtx()
+await apply(stray, { headers: { 'x-dup': '1' }, hosts: ['127.0.0.1'] })
 await fetch(`${baseUrl}/t5`)
-check('T5 第二次 apply 跳过且不破坏', received['x-dup'] === '1')
+check('T5 双重挂载头一致', received['x-dup'] === '1')
+dispose(stray) // 清理多余实例（还原到 ctx 的包装）
 
 // T6 effect 还原原 fetch
 dispose(ctx)
