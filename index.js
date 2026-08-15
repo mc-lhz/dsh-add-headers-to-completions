@@ -20,7 +20,7 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 
 export const name = 'dsh-llm-headers'
 
-export const inject = ['settings']
+export const inject = ['settings', 'loader']
 
 const MARK = Symbol.for('dsh.llmHeaders.wrapper')
 const als = new AsyncLocalStorage()
@@ -180,25 +180,39 @@ export async function apply(ctx, config = {}) {
   const rebuildFrom = (next) => { tables = buildTables(next, log) }
 
   // settings 命名空间注册（尽力而为）：client 区块写这里，host 读这里。
+  // 进程内可能并存多个 FileSettingsProvider 实例（本行可能被多个 app 链各自
+  // 挂载），因此对每个可发现的实例都注册一份（按同一性去重，重复注册容忍）。
+  // 各实例读写同一份 settings.yaml，数据天然收敛；describe 可见性由 harness
+  // 的 apiproxy WEB_SETTINGS_NAMESPACES 白名单决定（需配套 harness 补丁）。
   const schemastery = await loadSchemastery()
-  if (schemastery && ctx.settings) {
-    try {
-      const z = schemastery
-      // 本 vendored schemastery 无 .partial()/.optional()，但 object schema 非严格：
-      // 缺失键自动省略、未知键保留，顶层 undefined 直接放行 —— 结构天然可选。
-      scope = ctx.settings.register('dsh-llm-headers', z.object({
-        global: z.dict(z.string()),
-        providers: z.dict(z.dict(z.string())),
-        models: z.dict(z.dict(z.string())),
-      }))
+  const providers = new Set()
+  for (const holder of [ctx, ctx.get('loader')?.ctx, ctx.get('webserver')?.ctx]) {
+    const p = holder?.get?.('settings')
+    if (p !== undefined && p !== null) providers.add(p)
+  }
+  if (schemastery && providers.size > 0) {
+    const z = schemastery
+    // 本 vendored schemastery 无 .partial()/.optional()，但 object schema 非严格：
+    // 缺失键自动省略、未知键保留，顶层 undefined 直接放行 —— 结构天然可选。
+    const scopeSchema = z.object({
+      global: z.dict(z.string()),
+      providers: z.dict(z.dict(z.string())),
+      models: z.dict(z.dict(z.string())),
+    })
+    const stopWatches = []
+    for (const p of providers) {
+      try {
+        const s = p.register('dsh-llm-headers', scopeSchema)
+        if (typeof s.watch === 'function') stopWatches.push(s.watch(() => reloadTables()))
+        if (scope === null) scope = s
+      } catch (error) {
+        log.warn(`[dsh-llm-headers] settings 注册跳过（${error && error.message ? error.message : error}）`)
+      }
+    }
+    if (scope !== null) {
+      ctx.effect?.(() => () => { for (const stop of stopWatches) stop() }, 'dsh-llm-headers: stop settings watches')
       reloadTables()
-      ctx.on?.('settings/document-updated', (ns) => {
-        if (ns === 'dsh-llm-headers' && scope !== null) reloadTables()
-      })
       log.info('[dsh-llm-headers] settings 命名空间已注册（client 区块 ↔ host 联动）')
-    } catch (error) {
-      scope = null
-      log.warn(`[dsh-llm-headers] settings 注册失败，继续 config 模式: ${error && error.message ? error.message : error}`)
     }
   } else {
     log.info('[dsh-llm-headers] 未检测到 settings 服务，config 模式')

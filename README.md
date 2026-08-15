@@ -74,12 +74,26 @@ node --import tsx/esm smoke.test.mjs   # 在 dsh 安装目录下运行（tsconfi
 以官方 `settings.section` 插槽注册独立"请求头"设置区块（id `request-headers`，与
 官方 Models 页共存）：三层编辑器（global / providers / models），改动即时经
 `api.settings.mutate` 落盘（带 expectedRevision）；host 半边注册同名命名空间
-`dsh-llm-headers` 并监听 `settings/document-updated` 重载三层表——闭环：
-edit → settings → document-updated → 下次模型请求生效。
+`dsh-llm-headers`（对能发现的所有 settings provider 实例注册一份并挂 `scope.watch`
+热重载）——闭环：edit → settings → 下次模型请求生效。
 
 - 客户端读取/写入：`src/client/scope.ts`（`api.settings.describe` / `mutate` + snapshot store）
 - 区块组件：`src/client/HeadersSection.tsx`（本地草稿 + 即时提交）
 - 文案：`src/client/locales.ts`（zh / en）；样式：`src/client/styles.ts`（TS 内嵌，自注入样式标签）
+
+### 配套 harness 补丁（必需）
+
+harness 的 apiproxy 对设置命名空间有**硬编码白名单**（`WEB_SETTINGS_NAMESPACES`，
+非模型类命名空间不在白名单内就回答 `settings-not-exposed`；把暴露权移到
+`settings.register()` 本身是 harness 的 deferred work）。要让设置页看到本区块，
+需要在 harness 源码把本命名空间加进白名单：
+
+```ts
+// packages/host/apiproxy/src/api-proxy.ts —— WEB_SETTINGS_NAMESPACES
+'dsh-llm-headers',
+```
+
+本仓库已随安装在此处加入了该行（本地 harness 改动，不随本仓库分发）。
 
 ## 构建（client 半边）
 
