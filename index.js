@@ -186,8 +186,8 @@ export async function apply(ctx, config = {}) {
   // 的 apiproxy WEB_SETTINGS_NAMESPACES 白名单决定（需配套 harness 补丁）。
   const schemastery = await loadSchemastery()
   const providers = new Set()
-  for (const holder of [ctx, ctx.get('loader')?.ctx, ctx.get('webserver')?.ctx]) {
-    const p = holder?.get?.('settings')
+  for (const holder of [ctx, ctx.get?.('loader')?.ctx, ctx.get?.('webserver')?.ctx]) {
+    const p = (typeof holder?.get === 'function' ? holder.get('settings') : undefined) ?? holder?.settings
     if (p !== undefined && p !== null) providers.add(p)
   }
   if (schemastery && providers.size > 0) {
@@ -211,6 +211,9 @@ export async function apply(ctx, config = {}) {
     }
     if (scope !== null) {
       ctx.effect?.(() => () => { for (const stop of stopWatches) stop() }, 'dsh-llm-headers: stop settings watches')
+      ctx.on?.('settings/document-updated', (ns) => {
+        if (ns === 'dsh-llm-headers' && scope !== null) reloadTables()
+      })
       reloadTables()
       log.info('[dsh-llm-headers] settings 命名空间已注册（client 区块 ↔ host 联动）')
     }
