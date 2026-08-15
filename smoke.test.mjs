@@ -74,11 +74,16 @@ await fetch(`${baseUrl}/t1`, { method: 'POST', headers: { authorization: 'Bearer
 check('T1 host 命中注入', received['x-company'] === 'acme' && received['x-trace'] === 't1')
 check('T1 原有头保留', received['authorization'] === 'Bearer sk-test')
 
-// T2 hosts 为空默认 -> 回环跳过
+// T2 hosts 为空默认 -> 回环放行（本地反向代理是常见注入目标）、.local 跳过
 dispose(ctx); ctx = makeCtx()
 await apply(ctx, { headers: { 'x-company': 'acme' } })
 await fetch(`${baseUrl}/t2`, { method: 'POST', body: 'hello' })
-check('T2 空列表跳过回环', received['x-company'] === undefined)
+check('T2 空列表回环放行', received['x-company'] === 'acme')
+const { matches } = await import('./index.js')
+check('T2b 无 hosts 匹配 127.0.0.1', matches('127.0.0.1', []) === true)
+check('T2c 无 hosts 跳过 .local', matches('myprinter.local', []) === false)
+check('T2d 无 hosts 匹配普通域名', matches('api.deepseek.com', []) === true)
+check('T2e hosts 后缀匹配', matches('proxy.example.com', ['example.com']) === true)
 
 // T3 未提供 init 仍注入
 dispose(ctx); ctx = makeCtx()

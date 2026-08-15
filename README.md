@@ -5,7 +5,7 @@
 - **三层 headers 表**：`global`（所有请求）→ `providers`（按 provider）→ `models`（按 `provider/model`，最细粒度），优先序 model > provider > global，逐级回退。
 - **模型感知**：监听 `llm/stream` waterfall 捕获本次调用的 `provider` / `model`，用 `AsyncLocalStorage` 传入适配器内部 fetch 所在异步链，包装器据此选择 headers 层。
 - **fill 合并**（默认）：已有同名头不覆盖，尊重 `authorization` 等适配器权威头；`fill: false` 切换为覆盖。
-- **安全**：值必须是非空字符串且不含 CR/LF（防 header 注入）；默认跳过回环地址与 `.local`。
+- **安全**：值必须是非空字符串且不含 CR/LF（防 header 注入）；默认仅跳过 `.local`（回环地址**不跳过**——本地反向代理如 `127.0.0.1:11434` 正是常见注入目标）。
 - **生命周期**：卸载 / HMR 时 `ctx.effect` 自动还原原 fetch；Symbol 标记防重复包装。
 
 ## 安装

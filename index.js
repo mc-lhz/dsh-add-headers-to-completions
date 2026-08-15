@@ -53,14 +53,14 @@ function hostnameOf(input) {
   }
 }
 
-/**
- * 命中规则：hosts 列表做后缀匹配（大小写不敏感，可带前导点）；
- * 空列表时跳过回环与 .local（保守默认），其余全部放行。
- */
-function matches(hostname, hosts) {
+/** 命中规则：hosts 列表做后缀匹配（大小写不敏感，可带前导点）。
+ * 空列表时仅跳过 .local（保守默认），其余全部放行 —— 包括 127.0.0.1 /
+ * localhost / ::1：本地反向代理（如 llm-pi-ai baseURL 指向 127.0.0.1:11434）
+ * 正是注入目标的常见形态，跳过回环会让 headers 永远到不了模型提供方。 */
+export function matches(hostname, hosts) {
   const h = String(hostname).toLowerCase()
   if (hosts.length === 0) {
-    if (h === 'localhost' || h === '127.0.0.1' || h === '::1' || h.endsWith('.local')) return false
+    if (h.endsWith('.local')) return false
     return true
   }
   return hosts.some((entry) => {
@@ -252,34 +252,52 @@ export async function apply(ctx, config = {}) {
     return
   }
 
-  const wrapped = async (input, init) => {
-    const hostname = hostnameOf(input)
-    if (hostname !== null && matches(hostname, hosts)) {
-      const headers = resolveFor(als.getStore(), tables)
-      if (Object.keys(headers).length > 0) {
-        const merged = new Headers(init && init.headers !== undefined ? init.headers : undefined)
-        for (const [key, value] of Object.entries(headers)) {
-          try {
-            if (fill && merged.has(key)) continue
-            merged.set(key, value)
-          } catch (error) {
-            log?.warn?.(`[dsh-llm-headers] 注入 "${key}" 失败: ${error && error.message ? error.message : error}`)
+  // 包装器：hosts 过滤 → ALS 上下文解析三层表 → 合并进 init.headers。
+  // 注意底层指向 `under`（变量），而非固定 original：若其它插件在 apply 之后
+  // 再次替换 globalThis.fetch（实测发生过——赋值后立刻被挤掉），自愈守护会
+  // 以当时的 global fetch 为底层重建包装链，保留其它包装而不跳过它们。
+  const wrapUnder = (under) => {
+    const w = async (input, init) => {
+      const hostname = hostnameOf(input)
+      if (hostname !== null && matches(hostname, hosts)) {
+        const headers = resolveFor(als.getStore(), tables)
+        if (Object.keys(headers).length > 0) {
+          const merged = new Headers(init && init.headers !== undefined ? init.headers : undefined)
+          for (const [key, value] of Object.entries(headers)) {
+            try {
+              if (fill && merged.has(key)) continue
+              merged.set(key, value)
+            } catch (error) {
+              log?.warn?.(`[dsh-llm-headers] 注入 "${key}" 失败: ${error && error.message ? error.message : error}`)
+            }
           }
+          init = { ...(init ?? {}), headers: merged }
         }
-        init = { ...(init ?? {}), headers: merged }
       }
+      return under(input, init)
     }
-    return original(input, init)
+    Object.defineProperty(w, MARK, { value: true })
+    return w
   }
-  Object.defineProperty(wrapped, MARK, { value: true })
 
-  globalThis.fetch = wrapped
+  let current = wrapUnder(original)
+  const heal = () => {
+    const top = globalThis.fetch
+    if (top === current) return
+    // 顶层 fetch 被其它插件替换：以它为底层重建链（保留其行为），再把自己放回顶层。
+    current = wrapUnder(typeof top === 'function' ? top : original)
+    globalThis.fetch = current
+  }
+  heal()
+  const timer = setInterval(heal, 3000)
+  timer.unref?.()
   ctx.effect(() => {
-    if (globalThis.fetch && globalThis.fetch[MARK] === true) globalThis.fetch = original
+    clearInterval(timer)
+    if (globalThis.fetch === current) globalThis.fetch = original
   }, 'dsh-llm-headers: fetch wrapper')
 
   log.info(`[dsh-llm-headers] 已激活: global=${Object.keys(tables.global).length}, ` +
     `providers=${Object.keys(tables.providers).length}, models=${Object.keys(tables.models).length}, ` +
     `fill=${fill}, ` +
-    (hosts.length === 0 ? '目标 = 所有非回环主机' : `目标 = hosts: ${hosts.join(', ')}`))
+    (hosts.length === 0 ? '目标 = 所有主机（除 .local）' : `目标 = hosts: ${hosts.join(', ')}`))
 }
