@@ -4,7 +4,7 @@
 
 - **三层 headers 表**：`global`（所有请求）→ `providers`（按 provider）→ `models`（按 `provider/model`，最细粒度），优先序 model > provider > global，逐级回退。
 - **模型感知**：监听 `llm/stream` waterfall 捕获本次调用的 `provider` / `model`，用 `AsyncLocalStorage` 传入适配器内部 fetch 所在异步链，包装器据此选择 headers 层。
-- **fill 合并**（默认）：已有同名头不覆盖，尊重 `authorization` 等适配器权威头；`fill: false` 切换为覆盖。
+- **fill 合并**（默认 **false = 覆盖**）：我们配置的头覆盖同名头 —— harness 适配器会强制注入自己的 `user-agent`（attribution），只有默认覆盖才能让用户改的 User-Agent 真正上线；`fill: true` 切换为保留适配器已有同名头。
 - **安全**：值必须是非空字符串且不含 CR/LF（防 header 注入）；默认仅跳过 `.local`（回环地址**不跳过**——本地反向代理如 `127.0.0.1:11434` 正是常见注入目标）。
 - **生命周期**：卸载 / HMR 时 `ctx.effect` 自动还原原 fetch；Symbol 标记防重复包装。
 
@@ -21,7 +21,7 @@ dsh plugin --profile web add <本目录绝对路径>
       config:
         hosts:                 # 后缀匹配；空 = 除回环 / .local 外全部命中
           - api.deepseek.com
-        fill: true             # true=不覆盖已有同名头（默认）；false=覆盖
+        fill: false            # 默认=false：我们配置的头覆盖同名头；true=保留适配器头
         global:                # 所有请求
           x-edge: proxy-1
         providers:             # 按 provider
@@ -41,8 +41,8 @@ dsh plugin --profile web add <本目录绝对路径>
 | `global` / `headers` | `Record<string,string>` | 所有请求都注入 |
 | `providers` | `Record<string, Record<string,string>>` | 按 provider 路由注入 |
 | `models` | `Record<'provider/model', Record<string,string>>` | 按模型注入（最细粒度） |
-| `hosts` | `string[]` | 目标主机后缀列表；空 = 除回环 / `.local` 外全部 |
-| `fill` | `boolean` | 默认 `true`（不覆盖已有同名头）；`false` 覆盖 |
+| `hosts` | `string[]` | 目标主机后缀列表；空 = 除 `.local` 外全部（回环放行） |
+| `fill` | `boolean` | 默认 `false`（覆盖同名头，适配器强制 attribution 的 `user-agent` 也能改）；`true` 保留 |
 
 请求头键值须为非空字符串、不含 CR/LF；不限制具体头名（注入 `content-length`/`host` 等需自行保证语义正确）。
 

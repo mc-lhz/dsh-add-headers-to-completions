@@ -166,8 +166,11 @@ function makeWaterfallHandler() {
 export async function apply(ctx, config = {}) {
   const log = ctx.logger ?? console
   const hosts = Array.isArray(config.hosts) ? config.hosts.map(String) : []
-  // fill = 不覆盖请求里已有的同名头（默认 true）；override = 我们的头优先。
-  const fill = config.fill !== false
+  // fill = 保留适配器已设置的同名头（true）；默认 false = 我们配置的头覆盖同名头。
+  // 注意：harness 各 LLM 适配器会强制注入自己的 user-agent（attribution，
+  // 且把用户传入的同名头排在前面再覆盖），因此要让用户配置的 User-Agent 真正
+  // 上线，必须默认覆盖（fill=false）；真需要"适配器权威"时再显式 fill: true。
+  const fill = config.fill === true
 
   let tables = buildTables(config, log)
   let scope = null

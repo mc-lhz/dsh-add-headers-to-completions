@@ -148,15 +148,15 @@ check('T8c 未知 provider→global 兜底', received['x-glob'] === 'g1' && rece
 await fetch(`${baseUrl}/t8d`, { method: 'POST', body: 'x' })
 check('T8d 无 store→global', received['x-glob'] === 'g1')
 
-// T9 fill / override
+// T9 fill / override（默认 false = 我们配置的头覆盖同名头）
 dispose(ctx); ctx = makeCtx()
 await apply(ctx, { headers: { 'x-company': 'new' }, hosts: ['127.0.0.1'] }) // fill 默认
 await fetch(`${baseUrl}/t9a`, { method: 'POST', headers: { 'x-company': 'old' }, body: 'x' })
-check('T9 默认 fill 不覆盖已有同名头', received['x-company'] === 'old')
+check('T9 默认覆盖已有同名头', received['x-company'] === 'new')
 dispose(ctx); ctx = makeCtx()
-await apply(ctx, { headers: { 'x-company': 'new' }, hosts: ['127.0.0.1'], fill: false }) // override
+await apply(ctx, { headers: { 'x-company': 'new' }, hosts: ['127.0.0.1'], fill: true }) // 保留
 await fetch(`${baseUrl}/t9b`, { method: 'POST', headers: { 'x-company': 'old' }, body: 'x' })
-check('T9 fill:false 覆盖已有同名头', received['x-company'] === 'new')
+check('T9 fill:true 保留适配器已有同名头', received['x-company'] === 'old')
 dispose(ctx)
 
 // T10 settings 通道：注册命名空间 + 叠加合并 + document-updated 重载 + llmHeaders.set 落盘
