@@ -1,0 +1,27 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "types": [],
+    "baseUrl": ".",
+    "paths": {
+      "@deepseek-ai/cordis": ["D:/Program Files/DeepseekHarness/node_modules/@deepseek-ai/cordis"],
+      "@deepseek-ai/schemastery": ["D:/Program Files/DeepseekHarness/vendor/schemastery/src/index.ts"],
+      "@deepseek-ai/dsh-client-runtime/client": ["D:/Program Files/DeepseekHarness/packages/client/runtime/lib/types/client/index.d.ts"],
+      "@deepseek-ai/dsh-client-web-react": ["D:/Program Files/DeepseekHarness/packages/client/web-react/lib/types/index.d.ts"],
+      "@deepseek-ai/dsh-client-ui-slots": ["D:/Program Files/DeepseekHarness/packages/client/ui-slots/lib/types/client/index.d.ts"],
+      "@deepseek-ai/dsh-client-ui-settings/client": ["D:/Program Files/DeepseekHarness/packages/client/ui-settings/lib/types/client/index.d.ts"],
+      "@deepseek-ai/dsh-client-locale/client": ["D:/Program Files/DeepseekHarness/packages/client/locale/lib/types/client/index.d.ts"],
+      "@deepseek-ai/dsh-api-remotes/client": ["D:/Program Files/DeepseekHarness/packages/api/remotes/lib/types/client/index.d.ts"],
+      "@deepseek-ai/dsh-api-remotes/types": ["D:/Program Files/DeepseekHarness/packages/api/remotes/lib/types/index.d.ts"],
+      "@deepseek-ai/dsh-settings/types": ["D:/Program Files/DeepseekHarness/packages/settings/settings/lib/types/index.d.ts"]
+    }
+  },
+  "include": ["src", "tsdown.config.ts"]
+}

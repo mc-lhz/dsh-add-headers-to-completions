@@ -61,14 +61,38 @@ node smoke.test.mjs
 ```
 
 覆盖：host 命中注入、回环跳过、无 init 注入、CRLF 过滤、防重复包装、卸载还原、
-llm/stream+ALS 三层回退（模型绑定 / provider 回退 / global 兜底 / 无 store 走 global）、fill 与 override。
+llm/stream+ALS 三层回退（模型绑定 / provider 回退 / global 兜底 / 无 store 走 global）、
+fill 与 override、settings 通道（命名空间注册 / 叠加合并 / document-updated 重载 / llmHeaders 落盘）。
+冒烟需在 tsx 下运行以解析 `@deepseek-ai/schemastery`：
 
-## 设置界面（计划中，client 半边）
+```sh
+node --import tsx/esm smoke.test.mjs   # 在 dsh 安装目录下运行（tsconfig paths 生效）
+```
 
-拟以官方 `settings.section` 插槽注册"请求头"设置区块：三层编辑器写入插件自有
-settings 命名空间 `dsh-llm-headers`，host 半边注册同名命名空间并监听变更加载三层表。
-前提已验证：本机 source-launch（tsx）下，外部插件可直接 `import '@deepseek-ai/schemastery'`
-（tsconfig paths 全局生效）；built 安装需另配依赖解析。
+## 设置界面（client 半边，已实现）
+
+以官方 `settings.section` 插槽注册独立"请求头"设置区块（id `request-headers`，与
+官方 Models 页共存）：三层编辑器（global / providers / models），改动即时经
+`api.settings.mutate` 落盘（带 expectedRevision）；host 半边注册同名命名空间
+`dsh-llm-headers` 并监听 `settings/document-updated` 重载三层表——闭环：
+edit → settings → document-updated → 下次模型请求生效。
+
+- 客户端读取/写入：`src/client/scope.ts`（`api.settings.describe` / `mutate` + snapshot store）
+- 区块组件：`src/client/HeadersSection.tsx`（本地草稿 + 即时提交）
+- 文案：`src/client/locales.ts`（zh / en）；样式：`src/client/styles.ts`（TS 内嵌，自注入样式标签）
+
+## 构建（client 半边）
+
+node 半边 `index.js` 为手写零依赖 ESM，无需构建；只有 client 产物需要构建：
+
+```sh
+pnpm install        # devDeps: tsdown / react / react-dom / @types/react…
+pnpm build          # tsdown → lib/client.js（ModuleLoader bundle，随包分发）
+```
+
+`lib/client.js` 为预构建产物（已提交）；`:package` 安装 / git 克隆部署时无需在此仓库构建。
+注意：vendored 构建链路（tsdown 0.22 + rolldown 1.2.4）对 `.css` 走内置 asset 管线，
+故样式不走 CSS Modules（源码见 `styles.ts` 说明）。
 
 ## 卸载
 
