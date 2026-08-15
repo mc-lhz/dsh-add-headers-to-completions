@@ -78,6 +78,8 @@ function KvEditor(props: {
 }) {
   const { t, rows, setRows, basePath, onChange, addLabel } = props
   const commit = (row: Row, oldName: string | undefined): void => {
+    // 受控输入必须先回写本地状态，否则 value 永远被旧 state 锁定、无法输入。
+    setRows(rows.map((r) => r.id === row.id ? { ...row } : r))
     if (row.name.length > 0 && row.value.length > 0) onChange([...basePath, row.name], row.value, false)
     else if (row.name.length > 0) onChange([...basePath, row.name], '', true)
     if (oldName !== undefined && oldName !== row.name && oldName.length > 0) {
