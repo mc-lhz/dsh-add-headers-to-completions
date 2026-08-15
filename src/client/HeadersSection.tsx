@@ -42,7 +42,7 @@ const toGroups = (map?: Record<string, Record<string, string>>): Group[] =>
  * oldName 存在且已改名时，先按旧名 unset 再按新名 set。
  */
 function RowInput(props: {
-  t: HeadersKey
+  t: (key: keyof HeadersKey) => string
   row: Row
   commit: (row: Row, oldName: string | undefined) => void
   remove: (row: Row) => void
@@ -53,23 +53,23 @@ function RowInput(props: {
       <input
         className={styles.kvName}
         value={row.name}
-        placeholder={t.headerName}
+        placeholder={t('headerName')}
         onChange={(e) => commit({ ...row, name: e.target.value }, row.name === '' ? undefined : row.name)}
       />
       <input
         className={styles.kvValue}
         value={row.value}
-        placeholder={t.headerValue}
+        placeholder={t('headerValue')}
         onChange={(e) => commit({ ...row, value: e.target.value }, undefined)}
       />
-      <button className={styles.kvRemove} onClick={() => remove(row)} title={t.remove}>✕</button>
+      <button className={styles.kvRemove} onClick={() => remove(row)} title={t('remove')}>✕</button>
     </div>
   )
 }
 
 /** 扁平 KV 编辑器（global / 某个提供方或模型的内部表）。 */
 function KvEditor(props: {
-  t: HeadersKey
+  t: (key: keyof HeadersKey) => string
   rows: Row[]
   setRows: (rows: Row[]) => void
   basePath: string[]
@@ -104,7 +104,7 @@ function KvEditor(props: {
 
 /** 分组编辑器（providers / models）：键可改名，子项为 KV 行。 */
 function GroupEditor(props: {
-  t: HeadersKey
+  t: (key: keyof HeadersKey) => string
   groups: Group[]
   setGroups: (groups: Group[]) => void
   basePath: string[]
@@ -145,7 +145,7 @@ function GroupEditor(props: {
                 setGroups(groups.map((g) => g.id === group.id ? { ...g, key: nextKey } : g))
               }}
             />
-            <button className={styles.kvRemove} onClick={() => removeGroup(group)} title={t.remove}>✕</button>
+            <button className={styles.kvRemove} onClick={() => removeGroup(group)} title={t('remove')}>✕</button>
           </div>
           <KvEditor
             t={t}
@@ -153,7 +153,7 @@ function GroupEditor(props: {
             setRows={(rows) => setGroups(groups.map((g) => g.id === group.id ? { ...g, rows } : g))}
             basePath={[...basePath, group.key]}
             onChange={onChange}
-            addLabel={t.headerName}
+            addLabel={t('headerName')}
           />
         </div>
       ))}
@@ -183,46 +183,46 @@ export function HeadersSection(props: HeadersSectionInjected) {
     if (remove) void scope.unsetPath(...path)
     else void scope.setPath(path, value)
   }
-  if (snap.status === 'loading') return <div className={styles.hint}>{t.loading}</div>
-  if (snap.status === 'unavailable') return <div className={styles.hint}>{t.unavailable}</div>
-  if (!writable) return <div className={styles.hint}>{t.readOnly}</div>
+  if (snap.status === 'loading') return <div className={styles.hint}>{t('loading')}</div>
+  if (snap.status === 'unavailable') return <div className={styles.hint}>{t('unavailable')}</div>
+  if (!writable) return <div className={styles.hint}>{t('readOnly')}</div>
 
   return (
     <div className={styles.section}>
-      <p className={styles.desc}>{t.desc}</p>
+      <p className={styles.desc}>{t('desc')}</p>
       <section className={styles.block}>
-        <h3 className={styles.blockTitle}>{t.globalTitle}</h3>
+        <h3 className={styles.blockTitle}>{t('globalTitle')}</h3>
         <KvEditor
           t={t}
           rows={globalRows}
           setRows={setGlobalRows}
           basePath={['global']}
           onChange={onChange}
-          addLabel={t.headerName}
+          addLabel={t('headerName')}
         />
       </section>
       <section className={styles.block}>
-        <h3 className={styles.blockTitle}>{t.providerTitle}</h3>
+        <h3 className={styles.blockTitle}>{t('providerTitle')}</h3>
         <GroupEditor
           t={t}
           groups={providerGroups}
           setGroups={setProviderGroups}
           basePath={['providers']}
           onChange={onChange}
-          keyPlaceholder={t.providerPlaceholder}
-          addLabel={t.providerPlaceholder}
+          keyPlaceholder={t('providerPlaceholder')}
+          addLabel={t('providerPlaceholder')}
         />
       </section>
       <section className={styles.block}>
-        <h3 className={styles.blockTitle}>{t.modelTitle}</h3>
+        <h3 className={styles.blockTitle}>{t('modelTitle')}</h3>
         <GroupEditor
           t={t}
           groups={modelGroups}
           setGroups={setModelGroups}
           basePath={['models']}
           onChange={onChange}
-          keyPlaceholder={t.modelPlaceholder}
-          addLabel={t.modelPlaceholder}
+          keyPlaceholder={t('modelPlaceholder')}
+          addLabel={t('modelPlaceholder')}
         />
       </section>
     </div>
