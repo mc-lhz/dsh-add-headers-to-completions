@@ -164,7 +164,7 @@ function GroupEditor(props: {
 
 export function HeadersSection(props: HeadersSectionInjected) {
   const { scope, useSnapshot, t } = props
-  const snap = useSnapshot()
+  const snap = useSnapshot((s) => s)
   const writable = snap.writable
   const value = snap.value
   const touched = useRef(false)
