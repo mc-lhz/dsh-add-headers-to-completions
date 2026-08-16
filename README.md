@@ -30,10 +30,8 @@ dsh web
 
 ## harness 补丁（必需，本地改动，升级 harness 后需重打）
 
-为什么必需：`user-agent` 是 harness attribution 的保留名（适配器会过滤部署 UA
-再补 `deepseek-harness/...`），设置命名空间默认对插件不可见。这两个行为必须改源码。
-**不用手动改**——复制下面两段提示词，分别粘贴给任意 AI 编码助手（或本项目的
-开发者帮你执行），它会在你的 harness 源码目录完成修改；提示词已带幂等与校验。
+为什么必需：补丁1（设置命名空间可见）：设置命名空间默认对插件不可见；补丁2：`user-agent` 是 harness attribution 的保留名（适配器会过滤部署 UA 再补 `deepseek-harness/...`）。这两个行为必须改源码。
+**不用手动改**——复制下面两段提示词，分别粘贴给DeepSeek Harness或其他 AI 编码助手，它会在你的 harness 源码目录完成修改；提示词已带幂等与校验。
 目标目录：harness 源码根目录（`packages/...` 所在层）。
 
 ````text
