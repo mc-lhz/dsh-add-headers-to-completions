@@ -4,12 +4,13 @@
 
 ## 它能做什么
 
-- 像大模型请求注入自定义 HTTP 请求头，如 User-Agent、x-company、x-model-trace 等
+- 向大模型请求注入自定义 HTTP 请求头，如 User-Agent、x-company、x-model-trace 等
 - 支持全局、按 provider、按模型注入
 
 ## 安装
 
-前置：Node ≥ 20（`install.mjs` 无需 pnpm；`dsh plugin` 方式需要 pnpm）。
+前置：Node ≥ 20（`install.mjs` 无需 pnpm；`dsh plugin` 方式需要 pnpm）。目标机的
+`%DSH_HOME%\profiles\web` 需已存在（先成功启动过一次 dsh web）。
 
 1.克隆仓库/下载ZIP包
 ```bat
@@ -20,14 +21,32 @@ cd dsh-add-headers-to-completions
 ```bat
 node ./install.mjs
 ```
-3.重启 dsh web
+3.重启 dsh web（浏览器硬刷新 Ctrl+F5 加载新客户端）
 ```bat
-pnpm dsh web
+dsh web
 ```
 
-装完三步：**重启 dsh web**（主进程）→ 浏览器硬刷新（Ctrl+F5）→ 配置（见下）。
+> 若 `dsh` 命令未全局安装，用你平时的启动方式（如 harness 源码目录下的 `node --import tsx/esm apps/cli/src/bin.ts --profile web`）。
 
-> 两个 harness 本地补丁必须先在目标机打上（见「harness 补丁」节），否则设置区块报「命名空间不可用」、UA 也无法覆盖。
+## harness 补丁（必需，本地改动，升级 harness 后需重打）
+
+补丁 #1 —— 设置命名空间可见（否则设置区块报「命名空间不可用」）：
+apiproxy 对设置命名空间有硬编码白名单 `WEB_SETTINGS_NAMESPACES`，
+非模型类命名空间不在白名单内就回答 `settings-not-exposed`。
+
+```ts
+// packages/host/apiproxy/src/api-proxy.ts —— WEB_SETTINGS_NAMESPACES
+'dsh-llm-headers',
+```
+
+补丁 #2 —— 放开 user-agent 覆盖（否则你配的 User-Agent 永远上不了线）：
+pi-ai 适配器把 `user-agent` 当 attribution 保留名强行覆盖，`requestHeaders()`
+放开这一个名字，部署显式配置的 UA 胜出（其余保留名仍以 Harness 为准）。
+
+```ts
+// packages/llm/llm-pi-ai/src/adapter.ts —— requestHeaders()
+// 部署显式配置的 user-agent 允许胜出；其余 attribution 名仍以 Harness 为准。
+```
 
 ## 配置
 
@@ -90,17 +109,23 @@ node uninstall.mjs                      :: 或 dsh plugin --profile web remove d
 - 注入 `content-length` / `host` 等特殊头由使用方自行保证语义正确。
 
 ## 应用
-- 接入opencode zen免费模型：
-1. 新建自定义provider
 
-- API 地址 https://opencode.ai/zen/v1
-- API 协议 openai-completions
-- 点击获取模型-全选-确定，手动删除后缀不为free的模型
+接入 opencode zen 免费模型：
 
-2.配置全局headers
+1. 新建自定义 provider：API 地址 `https://opencode.ai/zen/v1`，API 协议 `openai-completions`，点击获取模型、全选确定，手动删除后缀不为 `-free` 的模型。
+2. 配置 User-Agent（真实生效通道）
 
-请求头-全局请求头 - +头名
-- User-Agent: opencode/1.18.18
+UA 要真正发到请求里，必须写 `llm-pi-ai.providers.<路由>.headers`（界面「请求头」
+区块写的是 `dsh-llm-headers` 命名空间，属于 fetch 层通道，对 pi-ai 的 openai SDK
+请求不生效）：
+
+```yaml
+llm-pi-ai:
+  providers:
+    opencode-zen:
+      headers:
+        User-Agent: opencode/1.18.18
+```
 
 3.切换模型
 切换到刚刚添加的模型（如deepseek-v4-flash-free），测试是否可以免费试用
