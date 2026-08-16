@@ -30,23 +30,82 @@ dsh web
 
 ## harness 补丁（必需，本地改动，升级 harness 后需重打）
 
-补丁 #1 —— 设置命名空间可见（否则设置区块报「命名空间不可用」）：
-apiproxy 对设置命名空间有硬编码白名单 `WEB_SETTINGS_NAMESPACES`，
-非模型类命名空间不在白名单内就回答 `settings-not-exposed`。
+为什么必需：`user-agent` 是 harness attribution 的保留名（适配器会过滤部署 UA
+再补 `deepseek-harness/...`），设置命名空间默认对插件不可见。这两个行为必须改源码。
+**不用手动改**——复制下面两段提示词，分别粘贴给任意 AI 编码助手（或本项目的
+开发者帮你执行），它会在你的 harness 源码目录完成修改；提示词已带幂等与校验。
+目标目录：harness 源码根目录（`packages/...` 所在层）。
 
-```ts
-// packages/host/apiproxy/src/api-proxy.ts —— WEB_SETTINGS_NAMESPACES
-'dsh-llm-headers',
-```
+````text
+【dsh-llm-headers 补丁 1/2 · 设置命名空间白名单】
+目标文件：harness 源码根目录/packages/host/apiproxy/src/api-proxy.ts
 
-补丁 #2 —— 放开 user-agent 覆盖（否则你配的 User-Agent 永远上不了线）：
-pi-ai 适配器把 `user-agent` 当 attribution 保留名强行覆盖，`requestHeaders()`
-放开这一个名字，部署显式配置的 UA 胜出（其余保留名仍以 Harness 为准）。
+请在该文件中做一处小修改（只改这一处，不得改动文件其它任何内容）：
+把：
+  const WEB_SETTINGS_NAMESPACES = [
+    'agent-loop', 'shell', 'locale', 'permission', 'ui-conversation', 'ui-theme', 'web-search-deepseek',
+  ] as const
+替换为：
+  const WEB_SETTINGS_NAMESPACES = [
+    'agent-loop', 'shell', 'locale', 'permission', 'ui-conversation', 'ui-theme', 'web-search-deepseek',
+    // dsh-llm-headers: user-installed plugin's own settings section (soft
+    // replacement, coexists with the official Models page). The namespace is
+    // registered by the plugin; this allowlist is the exposure gate for the
+    // settings configuration clients.
+    'dsh-llm-headers',
+  ] as const
 
-```ts
-// packages/llm/llm-pi-ai/src/adapter.ts —— requestHeaders()
-// 部署显式配置的 user-agent 允许胜出；其余 attribution 名仍以 Harness 为准。
-```
+规则：若文件里已存在行 'dsh-llm-headers',（含注释）则说明已打过，直接报告“已打过，跳过”并结束；
+替换前先确认锚文本完全匹配（含缩进）；完成后显示被替换位置的上下文供核对。
+背景：缺它时，插件设置的 dsh-llm-headers 命名空间对设置页/GUI 不可见（回答 settings-not-exposed）。
+````
+
+````text
+【dsh-llm-headers 补丁 2/2 · 放开 user-agent 覆盖】
+目标文件：harness 源码根目录/packages/llm/llm-pi-ai/src/adapter.ts
+
+请把 requestHeaders 函数整体替换（函数签名保持不变）：
+原函数：
+  function requestHeaders(headers: Readonly<Record<string, string>> | undefined): Record<string, string> {
+    const deployment = headers ?? {}
+    const attribution = attributionHeaders()
+    const reserved = new Set(Object.keys(attribution).map(name => name.toLowerCase()))
+    const kept = Object.fromEntries(
+      Object.entries(deployment).filter(([name]) => !reserved.has(name.toLowerCase())),
+    )
+    return { ...kept, ...attribution }
+  }
+替换为：
+  function requestHeaders(headers: Readonly<Record<string, string>> | undefined): Record<string, string> {
+    const deployment = headers ?? {}
+    const attribution = attributionHeaders()
+    const reserved = new Set(Object.keys(attribution).map(name => name.toLowerCase()))
+    // 本地增强（dsh-llm-headers）：部署显式配置的 user-agent 允许胜出 ——
+    // 这是本 build 唯一允许部署覆盖的 attribution 名；其余保留名仍以
+    // Harness attribution 为准（过滤部署同名头、attribution 最后合并）。
+    const deploymentHasUserAgent = Object.keys(deployment).some(name => name.toLowerCase() === 'user-agent')
+    const kept = Object.fromEntries(
+      Object.entries(deployment).filter(([name]) => {
+        const lower = name.toLowerCase()
+        return !reserved.has(lower) || lower === 'user-agent'
+      }),
+    )
+    const keptAttribution = Object.fromEntries(
+      Object.entries(attribution).filter(([name]) => {
+        const lower = name.toLowerCase()
+        return lower !== 'user-agent' || !deploymentHasUserAgent
+      }),
+    )
+    return { ...kept, ...keptAttribution }
+  }
+
+规则：若文件里已存在注释行“本地增强（dsh-llm-headers）”则说明已打过，直接报告“已打过，跳过”并结束；
+替换前先确认原函数文本完全匹配；完成后显示新函数头几行供核对。
+背景：缺它时，部署在 llm-pi-ai.providers.*.headers 里配置的 User-Agent 会被过滤，
+请求最终带上 deepseek-harness/<版本> 的 UA；打过之后显式配置的 UA 才能胜出。
+````
+
+打完后重启 dsh web 生效；harness 升级会覆盖这两个文件，升级后重新粘贴对应提示词即可（幂等）。
 
 ## 配置
 
