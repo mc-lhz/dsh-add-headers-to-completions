@@ -36,19 +36,40 @@ const dispose = (ctx) => {
   ctx.effects.length = 0
 }
 
-// settings 桩：register 记录命名空间，scope.set 直接改 section（模拟持久化）。
+// settings 桩：register 记录命名空间，scope.replace 直接改 section（模拟持久化）；
+// get(ns)/mutate(ns, ops) 模拟 llm-pi-ai 命名空间（真实通道同步的读写面）。
 // 注意：用 getter/setter 暴露 state，避免 spread 拷贝导致外部读到旧副本。
-const makeSettingsStub = () => {
-  const state = { registered: null, section: {} }
+const makeSettingsStub = (piaiDoc) => {
+  const state = { registered: null, section: {}, piai: piaiDoc ?? null, watchCb: null }
+  const applyOp = (node, op) => {
+    if (op.path.length === 0) {
+      if (op.op === 'unset') return {}
+      return { ...op.value }
+    }
+    const [head, ...rest] = op.path
+    if (rest.length === 0) {
+      if (op.op === 'unset') { const { [head]: _d, ...kept } = node; return kept }
+      return { ...node, [head]: op.value }
+    }
+    return { ...node, [head]: applyOp(node[head] ?? {}, { ...op, path: rest }) }
+  }
   return {
     get registered() { return state.registered },
     get section() { return state.section },
     set section(value) { state.section = value },
+    get: (ns) => (ns === 'llm-pi-ai' ? state.piai : undefined),
+    mutate: (ns, ops) => {
+      if (ns !== 'llm-pi-ai' || state.piai === null) return Promise.resolve()
+      for (const op of ops) state.piai = applyOp(state.piai, op)
+      return Promise.resolve()
+    },
     register: (ns, _schema) => {
       state.registered = ns
       return {
         get: () => state.section,
-        set: (value) => { state.section = value },
+        // 模拟真实 provider：replace 持久化并提交 → 触发注册表 watcher
+        replace: (value) => { state.section = value; state.watchCb?.() },
+        watch: (cb) => { state.watchCb = cb; return () => { state.watchCb = null } },
       }
     },
   }
@@ -163,6 +184,12 @@ check('T9 fill:true 保留适配器已有同名头', received['x-company'] === '
 dispose(ctx)
 
 // T10 settings 通道：注册命名空间 + 叠加合并 + document-updated 重载 + llmHeaders.set 落盘
+// （plain-node 下真实 schemastery 不可解析 → 注入假 z 测试钩子，schema 仅被桩消费）
+globalThis.__DSH_LLM_HEADERS_Z__ = {
+  object: () => globalThis.__DSH_LLM_HEADERS_Z__,
+  dict: () => globalThis.__DSH_LLM_HEADERS_Z__,
+  string: () => globalThis.__DSH_LLM_HEADERS_Z__,
+}
 ctx = makeCtx()
 const stub = makeSettingsStub()
 ctx.settings = stub
@@ -175,7 +202,7 @@ stub.section = { global: { 'x-b': 'set-b' } }
 ctx.emit('settings/document-updated', 'dsh-llm-headers')
 await fetch(`${baseUrl}/t10b`, { method: 'POST', body: 'x' })
 check('T10 doc-updated 后重载(settings 叠加 config)', received['x-b'] === 'set-b' && received['x-a'] === 'cfg-a')
-// llmHeaders.set → scope.set（持久化到 settings）
+// llmHeaders.set → scope.replace（持久化到 settings）
 ctx_provided.set({ global: { 'x-c': 'c3' } })
 check('T10 llmHeaders.set 落 settings section', stub.section.global['x-c'] === 'c3')
 ctx_provided.reset()
@@ -185,6 +212,43 @@ ctx.emit('settings/document-updated', 'dsh-llm-headers')
 await fetch(`${baseUrl}/t10c`, { method: 'POST', body: 'x' })
 check('T10 重载后生效', received['x-d'] === 'd4')
 dispose(ctx)
+
+// T11 真实通道同步：三层表 → llm-pi-ai.providers.<路由>.headers（mutate 路径）
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+ctx = makeCtx()
+const piaiStub = makeSettingsStub({
+  providers: {
+    'pi1': {},
+    'pi2': { headers: { 'x-manual': 'm1' } },
+    'pi3': { baseURL: 'http://x', apiKeyEnv: 'K' }, // 无 headers，非 headers 字段须原样保留
+  },
+})
+ctx.settings = piaiStub
+await apply(ctx, { hosts: ['127.0.0.1'] }) // config 无头；三层表完全来自 settings 层（贴合真实：config=插件默认值为空）
+// 界面写入等价物：llmHeaders.set（scope.replace → watch → reload → flush → 同步）
+ctx_provided.set({ global: { 'User-Agent': 'opencode/1.18.18' }, providers: { 'pi2': { 'x-route': 'r2' } } })
+await sleep(30)
+check('T11 同步写 pi1.headers[User-Agent]', piaiStub.get('llm-pi-ai')?.providers.pi1.headers?.['User-Agent'] === 'opencode/1.18.18')
+const pri2 = piaiStub.get('llm-pi-ai')?.providers.pi2.headers
+check('T11 pi2 保留手写头 + 路由头 + global 合并', pri2?.['x-manual'] === 'm1' && pri2?.['x-route'] === 'r2' && pri2?.['User-Agent'] === 'opencode/1.18.18')
+check('T11 pi3 无原 headers 也收到 global 头', piaiStub.get('llm-pi-ai')?.providers.pi3.headers?.['User-Agent'] === 'opencode/1.18.18')
+check('T11 pi3 非 headers 字段未破坏', piaiStub.get('llm-pi-ai')?.providers.pi3.baseURL === 'http://x' && piaiStub.get('llm-pi-ai')?.providers.pi3.apiKeyEnv === 'K')
+const touched = Object.keys(piaiStub.get('llm-pi-ai')?.providers.pi1 ?? {})
+check('T11 pi1 未引入多余字段', touched.length === 1 && touched[0] === 'headers')
+// 清空表 → pi1 unset；pi2 仅剩手写头
+ctx_provided.reset()
+await sleep(30)
+check('T11 reset 后 pi1.headers unset', piaiStub.get('llm-pi-ai')?.providers.pi1.headers === undefined)
+check('T11 reset 后 pi2 保留手写头', piaiStub.get('llm-pi-ai')?.providers.pi2.headers?.['x-manual'] === 'm1' && piaiStub.get('llm-pi-ai')?.providers.pi2.headers?.['User-Agent'] === undefined)
+dispose(ctx)
+// syncToProviders:false 关闭同步
+const ctxOff = makeCtx()
+const stubOff = makeSettingsStub({ providers: { 'px': {} } })
+ctxOff.settings = stubOff
+await apply(ctxOff, { global: { 'User-Agent': 'u' }, hosts: ['127.0.0.1'], syncToProviders: false })
+await sleep(30)
+check('T11 syncToProviders:false 关闭同步', stubOff.get('llm-pi-ai')?.providers.px.headers === undefined)
+dispose(ctxOff)
 
 server.close()
 console.log(`\n== ${passCount} PASS, ${failCount} FAIL ==`)

@@ -52,12 +52,18 @@ pi-ai 适配器把 `user-agent` 当 attribution 保留名强行覆盖，`request
 
 ### 界面
 
-设置 → **请求头** 区块：三层编辑器（global / providers / models），改动即落盘。
+设置 → **请求头** 区块：三层编辑器（global / providers / models），改动即落盘，
+并**自动同步到 `llm-pi-ai.providers.<路由>.headers`（真实通道）**：
+- `global` 写进所有 llm-pi-ai provider；`providers` 按路由写；
+- 清空某层会把之前同步的头移除（你在 `llm-pi-ai` 里手写的其它头不受影响）。
+
+也就是说，**界面配的 User-Agent 会经 pi-ai 的 openai SDK 真实发到请求里**（`syncToProviders: true` 默认开）。
 
 ### YAML 直写（高级）
 
 ```yaml
-dsh-llm-headers:            # 命名空间：UI 读写这里（fetch 层通道）
+dsh-llm-headers:            # 命名空间：UI 读写这里（fetch 层通道 + 同步源）
+  syncToProviders: true     # 表变更自动同步到 llm-pi-ai 真实通道（默认 true）
   global:
     x-edge: proxy-1
   providers:
@@ -69,21 +75,19 @@ dsh-llm-headers:            # 命名空间：UI 读写这里（fetch 层通道�
   hosts:                    # 目标主机后缀；空 = 除 .local 外全部（回环放行）
     - api.deepseek.com
   fill: false               # false=覆盖同名头（默认）；true=保留适配器头
-
-llm-pi-ai:                  # 真实通道（pi-ai openai SDK 请求）——按 provider 配 headers
-  providers:
-    opencode-reverse-proxy:
-      headers:
-        User-Agent: opencode/1.18.18
 ```
+
+说明：`llm-pi-ai.providers.<路由>.headers` 也可直接手写（真实通道，见「原理」），
+界面配置与手写互为等价通道（界面同步只增删自己写过的头）。
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
-| `global` | `Record<string,string>` | 所有请求注入 |
-| `providers` | `Record<string, Record<string,string>>` | 按 provider 路由注入 |
-| `models` | `Record<'provider/model', Record<string,string>>` | 按模型注入（最细粒度） |
+| `global` | `Record<string,string>` | 所有请求注入（同步时写进所有 llm-pi-ai provider） |
+| `providers` | `Record<string, Record<string,string>>` | 按 provider 路由注入（同步时写进对应路由） |
+| `models` | `Record<'provider/model', Record<string,string>>` | 按模型注入（最细粒度，仅 fetch 层通道） |
 | `hosts` | `string[]` | 目标主机后缀；空 = 除 `.local` 外全部（回环放行） |
 | `fill` | `boolean` | 默认 `false`（覆盖同名头）；`true` 保留适配器头 |
+| `syncToProviders` | `boolean` | 三层表变更是否同步进 `llm-pi-ai.providers.*.headers` 真实通道；默认 `true` |
 
 
 ## 卸载 / 清理
@@ -98,13 +102,13 @@ node uninstall.mjs                      :: 或 dsh plugin --profile web remove d
 ## 原理（两条通道，为什么 UA 需要补丁）
 
 1. **fetch 包装层**：适配器内部 fetch 所在异步链经 `AsyncLocalStorage` 传 `provider`/`model`，包装器按命中层合并头。**局限：pi-ai 的真实请求由官方 openai SDK（`new OpenAI({..., defaultHeaders})`）发出，不经过全局 fetch —— 该层对 SDK 请求不可见**（已用探针证实：包装器稳定挂载，但 SDK 请求带的是 attribution 的 UA）。
-2. **provider headers 通道（真实可靠）**：`llm-pi-ai.providers.<route>.headers` → 适配器 `requestHeaders()` 合并 → SDK `defaultHeaders` 原样上线。这是端到端实测通道（反代日志确认 `User-Agent: opencode/1.18.18` 到达，429 消失）。
+2. **provider headers 通道（真实可靠）**：`llm-pi-ai.providers.<route>.headers` → 适配器 `requestHeaders()` 合并 → SDK `defaultHeaders` 原样上线。这是端到端实测通道（反代日志确认 `User-Agent: opencode/1.18.18` 到达，429 消失）。本插件的三层表（global/providers）变更时会**自动同步**进该通道（所有权跟踪：只增删自己写过的头，`syncToProviders: false` 可关），因此界面「请求头」区块配置即走此通道。
 
 `user-agent` 是 harness attribution 的保留名，适配器 `requestHeaders()` 默认硬删部署的 UA 再补 `deepseek-harness/...` —— 所以覆盖 UA 必须打补丁 #2。
 
 ## 限制
 
-- **models 层**（按 `provider/model`）只在 fetch 层通道生效；llm-pi-ai 的 schema 只有 **provider 级** `headers`，模型级头无法经 SDK 通道上线。
+- **models 层**（按 `provider/model`）只在 fetch 层通道生效，且**不参与同步**；llm-pi-ai 的 schema 只有 **provider 级** `headers`，模型级头无法经 SDK 通道上线。
 - **user-agent 覆盖依赖补丁 #2**；其它 attribution 保留名（如 `x-harness-*` 之类）仍不可覆盖。
 - 注入 `content-length` / `host` 等特殊头由使用方自行保证语义正确。
 
@@ -113,19 +117,16 @@ node uninstall.mjs                      :: 或 dsh plugin --profile web remove d
 接入 opencode zen 免费模型：
 
 1. 新建自定义 provider：API 地址 `https://opencode.ai/zen/v1`，API 协议 `openai-completions`，点击获取模型、全选确定，手动删除后缀不为 `-free` 的模型。
-2. 配置 User-Agent（真实生效通道）
+2. 配置 User-Agent（两种方式任选，界面方式会自动同步到真实通道）：
 
-UA 要真正发到请求里，必须写 `llm-pi-ai.providers.<路由>.headers`（界面「请求头」
-区块写的是 `dsh-llm-headers` 命名空间，属于 fetch 层通道，对 pi-ai 的 openai SDK
-请求不生效）：
+   - **界面**：设置 → **请求头** → 全局请求头 → 添加头 `User-Agent: opencode/1.18.18`
+   - **YAML**：
+     ```yaml
+     llm-pi-ai:
+       providers:
+         opencode-zen:
+           headers:
+             User-Agent: opencode/1.18.18
+     ```
 
-```yaml
-llm-pi-ai:
-  providers:
-    opencode-zen:
-      headers:
-        User-Agent: opencode/1.18.18
-```
-
-3.切换模型
-切换到刚刚添加的模型（如deepseek-v4-flash-free），测试是否可以免费试用
+3. 切换模型：切换到刚刚添加的模型（如 deepseek-v4-flash-free），测试是否可以免费试用

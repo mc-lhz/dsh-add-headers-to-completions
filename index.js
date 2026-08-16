@@ -12,6 +12,10 @@
  *      （schema 经 @deepseek-ai/schemastery，source-launch 下由 tsx paths 解析），
  *      section = config（默认值）上叠加设置值；settings/document-updated 触发重载。
  *      注册失败则回退 config 模式，插件仍可用。
+ *   5) llm-pi-ai 真实通道同步（syncToProviders，默认开）：三层表变更后，用
+ *      settings 实例的 get(ns)/mutate(ns, ops) 把 headers 写进
+ *      llm-pi-ai.providers.<路由>.headers —— 界面配的值经 pi-ai openai SDK
+ *      defaultHeaders 真正上线（mutate 只要求 ns 已注册，无需我们注册）。
  *
  * 除 schemastery 外零第三方依赖（node:async_hooks 为内置）；无需构建。
  * 卸载 / HMR 时 ctx.effect 自动还原原 fetch 并解除监听（ctx.on 随 fiber 自动回收）。
@@ -24,10 +28,15 @@ export const inject = ['settings', 'loader']
 
 const MARK = Symbol.for('dsh.llmHeaders.wrapper')
 const als = new AsyncLocalStorage()
+let lastSyncSignature = null
 
 /** 尽力加载 schemastery（built 安装或纯 node 下可能不可解析 → null）。
- * 注意导出形态：vendored 版本把 z 作为 default 导出（官方一律 `import z from '@deepseek-ai/schemastery'`）。 */
+ * 注意导出形态：vendored 版本把 z 作为 default 导出（官方一律 `import z from '@deepseek-ai/schemastery'`）。
+ * 测试钩子：plain-node smoke 环境注入 __DSH_LLM_HEADERS_Z__（假 z，仅被
+ * settings 桩消费、schema 结构不被检查）即可走通 settings 通道分支。 */
 async function loadSchemastery() {
+  const injected = globalThis.__DSH_LLM_HEADERS_Z__
+  if (injected) return injected
   try {
     const mod = await import('@deepseek-ai/schemastery')
     return mod.default ?? mod
@@ -193,6 +202,60 @@ export async function apply(ctx, config = {}) {
     const p = (typeof holder?.get === 'function' ? holder.get('settings') : undefined) ?? holder?.settings
     if (p !== undefined && p !== null) providers.add(p)
   }
+  // 真实通道同步（默认开）：把三层表写进 llm-pi-ai 的 provider headers —— 这样
+  // 界面「请求头」区块配置的值会经 pi-ai 的 openai SDK defaultHeaders 真正上线
+  // （否则界面只写 fetch 层，对 SDK 请求不可见）。机制：llm-pi-ai 命名空间由
+  // llm-pi-ai 自己的行在 loader-host 的 settings 实例上注册，我们不改注册表，
+  // 只用 provider.get(ns) 读其解析值 + provider.mutate(ns, ops) 路径写入
+  // （mutate 只要求 ns 已注册，不要求注册者是我们）。
+  // 所有权语义：managedKeys 记录每路由"上次由我们写入"的 key；下次同步先摘掉
+  // 这些旧值再写入新的 global/route 值 —— 用户手写的其它头始终保留，而插件
+  // 自己写的头会随表清空而移除（否则同步出来的值会被当成手写头永久留置）。
+  const syncToProviders = config.syncToProviders !== false
+  const managedKeys = new Map() // route -> Set<key>（我们上次写入的头名）
+  const sameHeaders = (a, b) => {
+    const ka = Object.keys(a ?? {})
+    const kb = Object.keys(b ?? {})
+    return ka.length === kb.length && ka.every((k) => a[k] === b[k])
+  }
+  const syncPiai = async () => {
+    if (!syncToProviders) return
+    for (const p of providers) {
+      if (typeof p.get !== 'function' || typeof p.mutate !== 'function') continue
+      let resolved
+      try { resolved = p.get('llm-pi-ai') } catch { continue }
+      if (!resolved || typeof resolved.providers !== 'object' || resolved.providers === null) continue
+      const ops = []
+      for (const [route, profile] of Object.entries(resolved.providers)) {
+        const before = profile !== null && typeof profile === 'object' &&
+          profile.headers !== null && typeof profile.headers === 'object' ? profile.headers : {}
+        const current = { ...before }
+        const prev = managedKeys.get(route)
+        if (prev) for (const key of prev) delete current[key]
+        const mine = { ...tables.global, ...(tables.providers[route] ?? {}) }
+        const next = new Set(Object.keys(mine))
+        for (const [key, value] of Object.entries(mine)) current[key] = value
+        managedKeys.set(route, next)
+        if (sameHeaders(current, before)) continue // 无实际变化，不产生 op
+        const keys = Object.keys(current)
+        if (keys.length === 0) ops.push({ op: 'unset', path: ['providers', route, 'headers'] })
+        else ops.push({ op: 'set', path: ['providers', route, 'headers'], value: current })
+      }
+      if (ops.length === 0) return
+      const signature = JSON.stringify(ops)
+      if (signature === lastSyncSignature) return
+      lastSyncSignature = signature
+      try {
+        await p.mutate('llm-pi-ai', ops)
+        log.info?.(`[dsh-llm-headers] 已同步 ${ops.length} 条 provider headers 到 llm-pi-ai`)
+      } catch (error) {
+        lastSyncSignature = null
+        log.warn?.(`[dsh-llm-headers] 同步 llm-pi-ai 失败: ${error && error.message ? error.message : error}`)
+      }
+      return // 只写注册了 llm-pi-ai 的那个 settings 实例
+    }
+  }
+  const flushSync = () => { void syncPiai() }
   if (schemastery && providers.size > 0) {
     const z = schemastery
     // 本 vendored schemastery 无 .partial()/.optional()，但 object schema 非严格：
@@ -206,7 +269,7 @@ export async function apply(ctx, config = {}) {
     for (const p of providers) {
       try {
         const s = p.register('dsh-llm-headers', scopeSchema)
-        if (typeof s.watch === 'function') stopWatches.push(s.watch(() => reloadTables()))
+        if (typeof s.watch === 'function') stopWatches.push(s.watch(() => { reloadTables(); flushSync() }))
         if (scope === null) scope = s
       } catch (error) {
         log.warn(`[dsh-llm-headers] settings 注册跳过（${error && error.message ? error.message : error}）`)
@@ -215,7 +278,7 @@ export async function apply(ctx, config = {}) {
     if (scope !== null) {
       ctx.effect?.(() => () => { for (const stop of stopWatches) stop() }, 'dsh-llm-headers: stop settings watches')
       ctx.on?.('settings/document-updated', (ns) => {
-        if (ns === 'dsh-llm-headers' && scope !== null) reloadTables()
+        if (ns === 'dsh-llm-headers' && scope !== null) { reloadTables(); flushSync() }
       })
       reloadTables()
       log.info('[dsh-llm-headers] settings 命名空间已注册（client 区块 ↔ host 联动）')
@@ -223,6 +286,9 @@ export async function apply(ctx, config = {}) {
   } else {
     log.info('[dsh-llm-headers] 未检测到 settings 服务，config 模式')
   }
+  // 首次同步：无论 settings 模式还是 config 模式，表初始化后都把三层表刷进
+  // llm-pi-ai provider headers（真实通道）。无 llm-pi-ai 注册时 get 返回 undefined，静默跳过。
+  flushSync()
 
   // 运行时服务：其它插件 / 设置界面可读写三层表（有 scope 时写 settings 持久化）。
   const snapshot = () => ({
@@ -233,12 +299,14 @@ export async function apply(ctx, config = {}) {
   ctx.provide?.('llmHeaders', {
     get: snapshot,
     set: (next) => {
-      if (scope !== null) scope.set(buildTables(next, log))
+      if (scope !== null) scope.replace(buildTables(next, log))
       else rebuildFrom(next)
+      flushSync()
     },
     reset: () => {
-      if (scope !== null) scope.set({})
+      if (scope !== null) scope.replace({})
       else rebuildFrom({ global: {}, providers: {}, models: {} })
+      flushSync()
     },
   })
 
